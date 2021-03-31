@@ -1,0 +1,200 @@
+---
+title: "Synergy occ hist cleaning"
+author: "Calvin Ge"
+date: "22/03/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+base.path<-("/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Occ.hist")
+data.path <- paste0(base.path,"/SAS/")
+output.path <-paste0(base.path,"/Rdata/")
+
+
+library(doBy)
+library(sas7bdat)
+library(data.table)
+library(openxlsx)
+
+```
+
+
+```{r Fixing wrong isco codes and recoding military workers}
+
+load(file=paste0(output.path,"sas.hist.Rdata"))
+#original sas occ.history file above, 178889 obs; 26 variables
+
+#jobs without match to official isco, basically all A jobs except for 05820, 45430, 72950. We want to keep these plus the AA001 military personnel
+occ.hist$isco[occ.hist$isco=="05820"] <- "58200"
+occ.hist$isco[occ.hist$isco=="45430"] <- "45130"
+occ.hist$isco[occ.hist$isco=="72950"] <- "72450"
+selected <- (occ.hist$jobend - occ.hist$jobstart)>3 & occ.hist$isco5=="AA001"  # selecting of specific group (army>3 years) for recode - cg
+table(selected) #1862 lines selected
+occ.hist$isco<-as.character(occ.hist$isco) 
+occ.hist$isic <- as.factor(occ.hist$isic4)
+occ.hist$isco[selected] <- "100000"
+table(occ.hist$isco=="100000") #1862 assigned
+occ.hist$isco<-as.factor(occ.hist$isco) 
+
+```
+
+
+```{r setting country and region}
+occ.hist$country <- "Unknown"
+  occ.hist$country[occ.hist$study_name %in% c("AUT","HdA")] <- "Germany"
+  occ.hist$country[occ.hist$study_name %in% c("EAGLE","ROME","TURIN")] <- "Italy"
+  occ.hist$country[occ.hist$study_name %in% c("LUCA","PARIS","ICARE")] <- "France"
+  occ.hist$country[occ.hist$study_name %in% c("MONTREAL","Montreal","Toronto")] <- "Canada"
+  occ.hist$country[occ.hist$study_name %in% c("LUCAS")] <- "Sweden"
+  occ.hist$country[occ.hist$study_name %in% c("MORGEN")] <- "Netherlands"
+  occ.hist$country[occ.hist$study_name %in% c("CAPUA")] <- "Spain"
+  occ.hist$country[occ.hist$study_name %in% c("INCO") & occ.hist$centerid %in% c("07")] <- "UK"
+  occ.hist$country[occ.hist$study_name %in% c("INCO") & occ.hist$centerid %in% c("11")] <- "Romania"
+  occ.hist$country[occ.hist$study_name %in% c("INCO") & occ.hist$centerid %in% c("21","22","23","24","25")] <- "Hungary"
+  occ.hist$country[occ.hist$study_name %in% c("INCO") & occ.hist$centerid %in% c("31","32")] <- "Poland"
+  occ.hist$country[occ.hist$study_name %in% c("INCO") & occ.hist$centerid %in% c("41")] <- "Russia"
+  occ.hist$country[occ.hist$study_name %in% c("INCO") & occ.hist$centerid %in% c("51","52","53")] <- "Slovakia"
+  occ.hist$country[occ.hist$study_name %in% c("INCO") & occ.hist$centerid %in% c("61","62","63")] <- "Czech Republic"
+  occ.hist$country <- factor(occ.hist$country)
+  table(occ.hist$country)
+  
+  occ.hist$region <- "Unknown"
+  occ.hist$region[occ.hist$country %in% c("Germany")] <- "Germany"
+  occ.hist$region[occ.hist$country %in% c("Netherlands")] <- "West"
+  occ.hist$region[occ.hist$country %in% c("UK")] <- "UK"
+  occ.hist$region[occ.hist$country %in% c("France")] <- "France"
+  occ.hist$region[occ.hist$country %in% c("Spain","Italy")] <- "South"
+  occ.hist$region[occ.hist$country %in% c("Sweden")] <- "North"
+  occ.hist$region[occ.hist$country %in% c("Canada")] <- "Canada"
+  occ.hist$region[occ.hist$country %in% c("Romania","Hungary","Poland","Russia","Slovakia","Czech Republic")] <- "CEE"
+  occ.hist$region <- factor(occ.hist$region)
+
+  
+```
+
+```{r exclusion of subjects with bad jobstart/jobend measures}
+
+length(unique(occ.hist$subjctid)) #39518 unique ids - cg
+occ.hist$excluded <- 0
+selected <- (occ.hist$jobstart<0 | occ.hist$jobend<0)
+sum(selected) #2192 selected
+occ.hist$excluded[selected] <- 1 #exclusion of subjects with bad jot start/end dates - cg 
+excluded.jobhistory <- unique(occ.hist$subjctid[selected])
+length(excluded.jobhistory) #1290 unique subjects excluded - cg
+#save(excluded.jobhistory,file=paste0(output.path,"excluded.jobhistory.Rdata"))
+  
+length(unique(occ.hist$subjctid)) #39518 unique subjects to start - cg
+occ.hist <- occ.hist[!selected,]
+length(unique(occ.hist$subjctid)) #38852 unique subjects remain - cg
+
+ to.keep <- c("subjctid","jbperiod","jobstart","jobend","isco","isic","study_name","isic4","isco5","region","country","excluded")
+  occ.hist <- occ.hist[to.keep] #176697 obs remain - cg
+  table(duplicated(occ.hist)) #31 duplicates
+  occ.hist[duplicated(occ.hist),] #show duplicated lines, all from UK - cg
+  occ.hist <- unique(occ.hist) #176666 obs remain - cg
+  occ.hist <- occ.hist[order(occ.hist$subjctid,occ.hist$jbperiod),]
+  length(unique(occ.hist$subjctid)) #38852 unique ids remain - cg
+
+  tmp <- summaryBy(jobstart ~ study_name + subjctid + jbperiod, data=occ.hist, FUN=length) #summarize by jobstart/study_name/subjctid/jbperiod. these should be unique individuals (length = 1) if there's no problem
+  table(tmp$jobstart.length)  #repeats found in 3 
+  occ.hist[occ.hist$subjctid %in% unique(tmp[tmp$jobstart.length>1,"subjctid"]),] #jobs with wrong job periods/job starts - from 3 subjects
+
+  selected <- occ.hist$jobend<occ.hist$jobstart #selection of subjects with wrong job start/end dates - cg
+  occ.hist[selected,] #7 jobs selected
+  occ.hist[occ.hist$subjctid %in% unique(occ.hist$subjctid[selected]),] #shows all jobs for selected subjects, 44 in total
+  occ.hist[selected,c("jobstart","jobend")] <- occ.hist[selected,c("jobend","jobstart")] #flipped lines with wrong start/end dates - cg
+  occ.hist[selected,] 
+
+  occ.hist <- occ.hist[order(occ.hist$subjctid,occ.hist$jobstart,occ.hist$jobend),]
+  tmp <- summaryBy(jobstart ~ subjctid, data=occ.hist, FUN=length)
+  occ.hist$jobno <- unlist(sapply(tmp$jobstart.length,FUN=function(x){1:x})) #created new jobno variable and ordered accordingly - cg
+  
+  years<-setDT(occ.hist)[ , list( subjctid = subjctid, jobno=jobno, year = seq(jobstart, jobend, by = 1)), by = 1:nrow(occ.hist)] #1757838 lines; setDT converts df to a data.table. Then for each row, by = 1:nrow(df), we create subjectid/jobno/year as required.
+
+
+  years$jobno <- as.numeric(as.character(years$jobno))
+years[1:10,]
+years$nrow<-NULL
+  occ.hist <- merge(occ.hist[,c("subjctid","jobno","isco","isic","isic4","isco5","study_name","country","region")],years,by=c("subjctid","jobno"),all.x=TRUE)
+occ.hist[1:10,]
+  nrow(occ.hist)#1757838 obs - cg
+  length(unique(occ.hist$subjctid)) #38852 unique IDs
+  
+  save(occ.hist,file=paste0(output.path,"occ.hist.predom.Rdata")) #savepoint before dom-jem merge - cg
+```
+
+```{r DOM-JEM}
+
+#load(file=paste0(output.path,"occ.hist.prejem.Rdata"))
+
+  if (TRUE) {
+  jem<-read.xlsx(paste0(output.path,"DOM_JEM.xlsx"),sheet=1, colNames = TRUE) #jem2 is DOMJEM I cleaned up, jem is one given by LP - cg
+  colnames(jem) <- tolower(colnames(jem))
+  jem[jem$description=="armed forces",]
+  jem$isco68_5d[jem$isco68_5d=="AA010"] <- "100000"
+  jem$isco<-as.factor(as.character(jem$isco68_5d)) #made $isco a factor
+  jem<-jem[!duplicated(jem$isco),] #remove duplicates in JEM
+  table(jem$silica) # 0, 1, 2 levels
+  } #end
+
+ occ.hist <- merge(occ.hist,jem,by="isco",all.x=TRUE) #merge with jem - cg
+ table(is.na(occ.hist$silica)) # 1756676 lines matched 
+ tmp<-occ.hist[is.na(occ.hist$silica)]
+ tmp$isco<-as.character(tmp$isco)
+ table(tmp$isco) #shows all unmatched codes, basically all codes starting with "A"
+ occ.hist<-occ.hist[!is.na(occ.hist$silica),] #1756676 lines matched 
+summary(occ.hist$silica) 
+  anyNA(occ.hist$silica) #no NA's left in silica field
+  
+####additional JEM mods#####
+  selected <- !is.na(occ.hist$isic) & occ.hist$isic==3699 & !is.na(occ.hist$isco) & occ.hist$isco %in% c(1420,70090,74190,75200:75299,75415,75420,75425,94300,94390,94980,98550)
+  occ.hist$asbestos[selected]
+  occ.hist$asbestos[selected] <- 1
+  selected <- !occ.hist$country %in% c("Italy","Russia","Canada","UK") & occ.hist$year <= 1945
+  occ.hist$asbestos[selected] <- 0
+  selected <- !is.na(occ.hist$isic) & occ.hist$isic %in% c(3710,3720) & occ.hist$isco==97320
+  occ.hist$pah[selected]
+  occ.hist$pah[selected] <- 1
+  selected <- !is.na(occ.hist$isco) & occ.hist$isco==72420
+  occ.hist$silica[selected]
+  occ.hist$silica[selected] <- 1
+  selected <- !is.na(occ.hist$isic) & occ.hist$isic %in% c(5000) & occ.hist$isco==99910
+  occ.hist$silica[selected]
+  occ.hist$silica[selected] <- 1
+  selected <- !is.na(occ.hist$isic) & occ.hist$isic %in% c(2901,3610,3690,3691,3692,3699) & (occ.hist$isco %in% c(84105,84140,84910,97145,97150,97155,97920,97930,99910,84970,98550,70090,97990,97320,97325,97327,97330,97340,97390))
+  occ.hist$silica[selected]
+  occ.hist$silica[selected] <- 1
+
+  selected <- occ.hist$isic4 %in% c("37","29","35","38","41")
+  occ.hist$isic[selected]
+  occ.hist$isic[selected] <- 100*as.numeric(as.character(occ.hist$isic4[selected]))
+  selected <- !is.na(occ.hist$isic) & occ.hist$isic==0
+  occ.hist$isic[selected]
+  occ.hist$isic[selected] <- NA 
+  occ.hist <- occ.hist[order(occ.hist$subjctid,occ.hist$year),]
+
+  
+save(occ.hist,file=paste0(output.path,"occ.hist.postdom.Rdata")) #savepoint before syn-jem merge - cg
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

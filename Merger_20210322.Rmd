@@ -1,0 +1,235 @@
+---
+title: "Synergy master files merge"
+author: "Calvin Ge"
+date: "22/03/2021"
+output: html_document
+---
+
+```{r setup} 
+
+library(doBy)
+library(sas7bdat)
+library(data.table)
+library(openxlsx)
+
+base.path <- "/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/" 
+
+output.path <-base.path
+
+```
+
+
+```{r lastest files}
+
+load(file=paste0(base.path,"synergy_master_file_20210322.Rdata")) #master all.subjects file
+load(file=paste0(base.path,"synergy_master_occ_hist_20210322.Rdata")) #master occ.hist file
+
+#all.subjects2<-read.csv(file=paste0(base.path,"syn_all_subjects.txt"),sep="\t") #all.subjects text file 
+#occ.hist2<-read.csv(file=paste0(base.path,"syn_all_occ_hist.txt"),sep="\t") #all.subjects text file 
+
+```
+
+```{r IARC meeting}
+
+range(all.subjects$age[all.subjects$agegroup==1])
+range(all.subjects$age[all.subjects$agegroup==2])
+range(all.subjects$age[all.subjects$agegroup==3])
+range(all.subjects$age[all.subjects$agegroup==4])
+range(all.subjects$age[all.subjects$agegroup==5])
+range(all.subjects$age[all.subjects$agegroup==6])
+range(all.subjects$age[all.subjects$agegroup==7])
+range(all.subjects$age[all.subjects$agegroup==8])
+range(all.subjects$asbestos_cum0[all.subjects$asbestos_qq0==2])
+range(all.subjects$asbestos_cum0[all.subjects$asbestos_qq0==3])
+range(all.subjects$asbestos_cum0[all.subjects$asbestos_qq0==4]) #cut is same
+
+table(all.subjects$smoking[],all.subjects$silica_qq0)
+
+
+
+```
+
+
+
+```{r trimmed file loading}
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/Silica_paper/Rdata/final.subjects.CG.Rdata") #clean file used in silica manuscript
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Asbestos/Rdata/final.subjects.linked.trimmed.Rdata")
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Chromium/Rdata/final.subjects.linked.trimmed.Rdata")
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Nickel/Rdata/final.subjects.linked.trimmed.Rdata")
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/PAH/Rdata/final.subjects.linked.trimmed.Rdata")
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Silica/Rdata/final.subjects.linked.trimmed.Rdata")
+
+```
+
+```{r columns to keep}
+
+names(all.subjects)
+colnames(all.subjects)[colnames(all.subjects) == 'duration'] <- 'smok_duration'
+colnames(all.subjects)[colnames(all.subjects) == 'intensity'] <- 'smok_intensity'
+
+keep<-all.subjects[,c("subjctid","study_name","country","sex","Enrolyr","Interyr","diagyr","Histotyp","status","age","agegroup",
+                      "smoking","smok_intensity","smok_duration","packyears","packyrs","ever_smok","time_quit","time_since_quit",
+                      "A","Blue","Years_employed","constr","miner","metalw","transp","veh_mech","farmer","since60","since70")]
+
+colnames(keep)<-tolower(colnames(keep))
+colnames(keep)[colnames(keep) == 'a'] <- 'list_a'
+
+
+```
+
+```{r merging all subjects files}
+
+all.subjects.asb$subjctid<-sub("^0+([0-9]*)$", "\\1", all.subjects.asb$subjctid) #get rid of leading zero
+all.subjects.asb$subjctid<-relevel(factor(all.subjects.asb$subjctid),ref="101031026")
+
+all.subjects.cr6$subjctid<-sub("^0+([0-9]*)$", "\\1", all.subjects.cr6$subjctid) #get rid of leading zero
+all.subjects.cr6$subjctid<-relevel(factor(all.subjects.cr6$subjctid),ref="101031026")
+
+all.subjects.ni$subjctid<-sub("^0+([0-9]*)$", "\\1", all.subjects.ni$subjctid) #get rid of leading zero
+all.subjects.ni$subjctid<-relevel(factor(all.subjects.ni$subjctid),ref="101031026")
+
+all.subjects.pah$subjctid<-sub("^0+([0-9]*)$", "\\1", all.subjects.pah$subjctid) #get rid of leading zero
+all.subjects.pah$subjctid<-relevel(factor(all.subjects.pah$subjctid),ref="101031026")
+
+all.subjects.sili$subjctid<-sub("^0+([0-9]*)$", "\\1", all.subjects.sili$subjctid) #get rid of leading zero
+all.subjects.sili$subjctid<-relevel(factor(all.subjects.sili$subjctid),ref="101031026")
+
+keep$subjctid<-as.factor(as.character(keep$subjctid))
+
+all.subjects<-merge(keep,all.subjects.asb,by = "subjctid", all.x = T)
+all.subjects<-merge(all.subjects,all.subjects.cr6,by = "subjctid", all.x = T)
+all.subjects<-merge(all.subjects,all.subjects.ni,by = "subjctid", all.x = T)
+all.subjects<-merge(all.subjects,all.subjects.pah,by = "subjctid", all.x = T)
+all.subjects<-merge(all.subjects,all.subjects.sili,by = "subjctid", all.x = T)
+
+table(is.na(all.subjects$list_a)) #262
+all.subjects$list_a[is.na(all.subjects$list_a)]<-0
+all.subjects$blue[is.na(all.subjects$blue)]<-0
+all.subjects$constr[is.na(all.subjects$constr)]<-0
+all.subjects$miner[is.na(all.subjects$miner)]<-0
+all.subjects$metalw[is.na(all.subjects$metalw)]<-0
+all.subjects$transp[is.na(all.subjects$transp)]<-0
+all.subjects$veh_mech[is.na(all.subjects$veh_mech)]<-0
+all.subjects$farmer[is.na(all.subjects$farmer)]<-0
+
+table(all.subjects$since60)
+table(all.subjects$since70)
+
+all.subjects$since60[is.na(all.subjects$since60)]<-0
+all.subjects$since70[is.na(all.subjects$since70)]<-0
+```
+
+```{r all subject file checks}
+
+### versus silica paper
+table(all.subjects$ever_silica0,all.subjects$status) #matches paper
+table(all.subjects$silica_qq0,all.subjects$status) #very close match to paper - slightly different qq cut
+table(all.subjects$silica_dur_cat0, all.subjects$status)#matches paper
+table(all.subjects$silica_time_since_exp40_0,all.subjects$status) #needs
+table(all.subjects$smoking[all.subjects$status==0],all.subjects$ever_silica0[all.subjects$status==0])#matches paper
+table(all.subjects$smoking[all.subjects$status==1],all.subjects$ever_silica0[all.subjects$status==1])#matches paper
+range(all.subjects$silica_cum0[all.subjects$silica_qq0==1])
+range(all.subjects$silica_cum0[all.subjects$silica_qq0==2])
+range(all.subjects$silica_cum0[all.subjects$silica_qq0==3])
+range(all.subjects$silica_cum0[all.subjects$silica_qq0==4])
+table(all.subjects$histotyp,all.subjects$silica_qq0) #very close match with paper - slightly different qq cut
+
+
+cumulative.0<- glm(status ~ 1 + factor(silica_qq0) + factor(study_name) + factor(agegroup) + sex + packyrs + factor(time_quit) + factor(list_a), data=all.subjects, family=binomial)
+round(exp(cbind(summary(cumulative.0)$coefficients[2:5,1],confint(cumulative.0)[2:5,])),2) #very close match with paper
+
+continuous.sili<-glm(status ~ 1 + silica_cum0 + factor(study_name) + factor(agegroup) + sex + packyrs + factor(time_quit) + factor(list_a), data=all.subjects, family=binomial)
+summary(continuous.sili)$coefficients[2,] #5.827300e-02 8.282756e-03 7.035460e+00 1.986040e-12 exact match with paper model
+round(exp(cbind(summary(continuous.sili)$coefficients[2:3,1],confint(continuous.sili)[2:3,])),3) #silica_cum0: 1.060 (1.04-1.077) per unit increase in cum. exposure
+AIC(continuous.sili) #42035.84 exact match with paper model
+
+### versus pahs draft
+table(all.subjects$ever_pah0,all.subjects$status) #matches draft
+table(all.subjects$pah_qq0,all.subjects$status) #very close match to draft
+table(all.subjects$pah_dur_cat0, all.subjects$status)#matches draft
+range(all.subjects$pah_cum0[all.subjects$pah_qq0==1])
+range(all.subjects$pah_cum0[all.subjects$pah_qq0==2])
+range(all.subjects$pah_cum0[all.subjects$pah_qq0==3])
+range(all.subjects$pah_cum0[all.subjects$pah_qq0==4]) #same cut
+
+cumulative.pah<- glm(status ~ 1 + factor(pah_qq0) + factor(study_name) + factor(agegroup) + sex + packyrs + factor(time_quit) + factor(list_a), data=all.subjects, family=binomial)
+round(exp(cbind(summary(cumulative.pah)$coefficients[2:5,1],confint(cumulative.pah)[2:5,])),2) #very close match with draft
+
+### versus asbestos paper
+table(all.subjects$ever_asbestos0[all.subjects$sex==1],all.subjects$status[all.subjects$sex==1]) #a few dozen more unexposed subjects (both cases & controls) included here, however some subjects are missing from table 2 (9608+6802+3898+510 = 20818 controls and 6629+6958+2717+482 = 16786 cases in Table 2, actual # should be 20965/16901)
+table(all.subjects$asbestos_qq0[all.subjects$sex==1],all.subjects$status[all.subjects$sex==1]) #very close in terms of exposed 
+table(all.subjects$ever_asbestos0[all.subjects$sex==0],all.subjects$status[all.subjects$sex==0]) #also a few more controls here, which is likely the actual correct sum
+table(all.subjects$asbestos_qq0[all.subjects$sex==0],all.subjects$status[all.subjects$sex==0]) #very close in terms of exposed
+range(all.subjects$asbestos_cum0[all.subjects$asbestos_qq0==1])
+range(all.subjects$asbestos_cum0[all.subjects$asbestos_qq0==2])
+range(all.subjects$asbestos_cum0[all.subjects$asbestos_qq0==3])
+range(all.subjects$asbestos_cum0[all.subjects$asbestos_qq0==4]) #cut is same
+
+cumulative.asb<- glm(status ~ 1 + factor(asbestos_qq0) + factor(study_name) + factor(agegroup) + sex + packyrs + factor(time_quit) + factor(list_a), data=all.subjects, family=binomial)
+round(exp(cbind(summary(cumulative.asb)$coefficients[2:5,1],confint(cumulative.asb)[2:5,])),2) #results very similar
+
+table(all.subjects$status[all.subjects$sex==1],all.subjects$smoking[all.subjects$sex==1]) #as above. paper missing some subjects in all categories. diff not very large. 
+
+
+```
+
+
+```{r save all.subjects file}
+
+save(all.subjects,file=paste0(output.path,"synergy_master_file_20210322.Rdata")) 
+
+write.table(all.subjects, file=paste0(output.path,"syn_all_subjects.txt"), sep="\t", row.names=FALSE)
+
+```
+
+
+```{r load and merge occ.hist files}
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Asbestos/Rdata/unique.hist.asbestos.Rdata")
+occ.hist.asb<-occ.hist[,c("subjctid","isco","jobno","asbestos","study_name","country","year","assignment.level","log.exposure","selected")]
+colnames(occ.hist.asb)[colnames(occ.hist.asb) == 'log.exposure'] <- 'asbestos_log.exposure'
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Chromium/Rdata/unique.hist.chromium.Rdata")
+occ.hist.cr6<-occ.hist[,c("subjctid","chromium","year","log.exposure")]
+colnames(occ.hist.cr6)[colnames(occ.hist.cr6) == 'log.exposure'] <- 'chromium_log.exposure'
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Nickel/Rdata/unique.hist.nickel.Rdata")
+occ.hist.ni<-occ.hist[,c("subjctid","nickel","year","log.exposure")]
+colnames(occ.hist.ni)[colnames(occ.hist.ni) == 'log.exposure'] <- 'nickel_log.exposure'
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/PAH/Rdata/unique.hist.pah.Rdata")
+occ.hist.pah<-occ.hist[,c("subjctid","pah","year","log.exposure")]
+colnames(occ.hist.pah)[colnames(occ.hist.pah) == 'log.exposure'] <- 'pah_log.exposure'
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Silica/Rdata/unique.hist.silica.Rdata")
+occ.hist.sili<-occ.hist[,c("subjctid","silica","year","log.exposure")]
+colnames(occ.hist.sili)[colnames(occ.hist.sili) == 'log.exposure'] <- 'silica_log.exposure'
+
+occ.hist<-merge(occ.hist.asb,occ.hist.cr6,by = c("subjctid","year"), all.x = TRUE)
+occ.hist<-merge(occ.hist,occ.hist.ni,by = c("subjctid","year"), all.x = TRUE)
+occ.hist<-merge(occ.hist,occ.hist.pah,by = c("subjctid","year"), all.x = TRUE)
+occ.hist<-merge(occ.hist,occ.hist.sili,by = c("subjctid","year"), all.x = TRUE)
+
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Occ.hist/Rdata/all.subjects.CG.Rdata")  #need lagyr from this 
+all.subjects<-all.subjects[all.subjects$excluded==0,] #37866 subjects remain
+occ.hist <- merge(occ.hist,all.subjects[,c("subjctid","lagyr")],by="subjctid",all.x=TRUE) #1424594 lines
+anyNA(occ.hist$lagyr)#hmmm
+occ.hist <- subset(occ.hist,year<=lagyr) #this is to get all jobs before lagyr
+nrow(occ.hist) #1396285
+
+names(occ.hist)
+
+#Note1: before use for calculating exposure by subjctid, exposure needs to be transformed form log scale back to normal
+#Note2: unique ids in occ.hist is less than in all.subjects. the 262 subjects difference essentially have various d
+
+save(occ.hist,file=paste0(output.path,"synergy_master_occ_hist_20210322.Rdata")) 
+write.table(occ.hist, file=paste0(output.path,"syn_all_occ_hist.txt"), sep="\t", row.names=FALSE)
+```
+
+Important note 1: before use for calculating exposure by subjctid, exposure needs to be transformed form log scale back to normal. 
+
+Important note 2: unique ids in occ.hist (n=37604) is less than in all.subjects (n=37866). The 262 subjects difference essentially have various neverworked/missing/blank/unknown jobs for their *entire* reported working lives. In our papers we have assumed that these 262 subjects have no work exposure and included them in the final epi analyses. 
+
+Ongoing tasks: fill in the NAs in list.a with 0. All confirmed to be non-list a jobs. 

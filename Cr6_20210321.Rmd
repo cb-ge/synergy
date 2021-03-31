@@ -1,0 +1,359 @@
+---
+title: "syn_cr6"
+author: "Calvin Ge"
+date: "21/03/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(doBy)
+library(sas7bdat)
+library(data.table)
+library(openxlsx)
+
+base.path <- "/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/" #work
+
+agent <- "Chromium" 
+indicator <- "chromium"
+short.indicator <- "cr"
+syn.indicator <- "chrom"
+data.path <- paste0(base.path,agent,"/SAS/")
+output.path <-paste0(base.path,agent,"/Rdata/")
+```
+
+
+
+```{r lastest file}
+
+load(file=paste0(output.path,"final.subjects.linked.Rdata"))
+
+```
+
+
+```{r synjem isco random effects}
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Occ.hist/Rdata/occ.hist.postdom.Rdata")#1756676 rows - this is precleaned data after merging to domjem
+  #have to work with numeric isco, removing all AA/X codes
+occ.hist$isco.num<-as.numeric(as.character(occ.hist$isco)) 
+occ.hist2<-occ.hist[!is.na(occ.hist$isco.num)] #1542499 rows
+occ.hist2$isco<-occ.hist2$isco.num
+occ.hist<-occ.hist2
+occ.hist2<-NULL
+  #done
+
+postfix <- ""
+      load(file=paste0(output.path,"random.isco",postfix,".Rdata"))
+      load(file=paste0(output.path,"random.region",postfix,".Rdata"))
+      load(file=paste0(output.path,"fixed.effects",postfix,".Rdata"))
+      occ.hist <- merge(occ.hist,random.isco[,c("isco","beta.isco")],by="isco",all.x=TRUE)
+      
+    occ.hist$beta.isco[occ.hist[,"chromium"]==0] <- NA
+    occ.hist$assignment.level <- 0
+    occ.hist$assignment.level[!is.na(occ.hist$beta.isco)] <- 5
+    occ.hist$isco2 <- floor(occ.hist$isco/1000)
+    occ.hist$isco3 <- floor(occ.hist$isco/100)
+    occ.hist$level2 <- as.numeric(!occ.hist$isco==100000 & (occ.hist$isco %% 1000)==0)
+    occ.hist$level3 <- as.numeric(occ.hist$level2==0 & !occ.hist$isco==100000 & (occ.hist$isco %% 100)==0)
+    table(occ.hist$level2,occ.hist$level3) #1498348/10520/33631
+
+    level2.estimates <- summaryBy(as.formula(paste0("beta.isco ~ isco2 + chromium")), data=occ.hist, FUN=function(x){c(mean(x,na.rm=TRUE),length(x[!is.na(x)]))}) 
+    level2.estimates$keep <-ifelse(level2.estimates[,2]>0, 1,0)
+    level2.estimates<-level2.estimates[level2.estimates$keep==1]
+    level2.estimates$keep<-NULL
+    colnames(level2.estimates)[3:4] <- c("beta.isco.mean","N")
+    save(level2.estimates,file=paste0(output.path,"level2.estimates.Rdata")) #OG data from LP is under same name in folder but with "copy" tag. 
+    level3.estimates <- summaryBy(as.formula(paste0("beta.isco ~ isco3 + chromium")), data=occ.hist, FUN=function(x){c(mean(x,na.rm=TRUE),length(x[!is.na(x)]))})
+    level3.estimates$keep <-ifelse(level3.estimates[,2]>0, 1,0)
+    level3.estimates<-level3.estimates[level3.estimates$keep==1]
+    level3.estimates$keep<-NULL
+    colnames(level3.estimates)[3:4] <- c("beta.isco.mean","N")
+    save(level3.estimates,file=paste0(output.path,"level3.estimates.Rdata"))#OG data from LP is under same name in folder but with "copy" tag. No prob here
+    
+    occ.hist <- merge(occ.hist,level3.estimates,by=c("isco3",indicator),all.x=TRUE)
+    table(!is.na(occ.hist$beta.isco.mean)) #152708 TRUE
+    occ.hist$beta.isco[is.na(occ.hist$beta.isco)] <- occ.hist$beta.isco.mean[is.na(occ.hist$beta.isco)]
+    occ.hist$beta.isco[occ.hist$level3==1] <- occ.hist$beta.isco.mean[occ.hist$level3==1]
+    occ.hist$assignment.level[occ.hist$level3==1] <- 3
+    occ.hist$assignment.level[!is.na(occ.hist$beta.isco) & occ.hist$assignment.level==0] <- 3
+    occ.hist$beta.isco.mean <- NULL
+    occ.hist$N<-NULL
+    occ.hist <- merge(occ.hist,level2.estimates,by=c("isco2",indicator),all.x=TRUE)
+    occ.hist$beta.isco[is.na(occ.hist$beta.isco)] <- occ.hist$beta.isco.mean[is.na(occ.hist$beta.isco)]
+    occ.hist$beta.isco[occ.hist$level2==1] <- occ.hist$beta.isco.mean[occ.hist$level2==1]
+    occ.hist$assignment.level[occ.hist$level2==1] <- 2
+    occ.hist$assignment.level[!is.na(occ.hist$beta.isco) & occ.hist$assignment.level==0] <- 2
+    occ.hist$beta.isco.mean <- NULL
+    occ.hist$N<-NULL
+    occ.hist$level2 <- occ.hist$level3 <- occ.hist$isco2 <- occ.hist$isco3 <- NULL
+    table(occ.hist$chromium,is.na(occ.hist$beta.isco))
+```
+
+
+```{r regional random effects}
+
+random.region$region <- factor(random.region$region,levels=levels(occ.hist$region))
+random.region$region
+occ.hist <- merge(occ.hist,random.region[,c("region","beta.region")],by="region",all.x=TRUE)
+        
+if (!any(random.region$region=="CEE")) {
+    occ.hist[occ.hist$region=="CEE",]$beta.region <- subset(random.region,region=="UK")$beta.region
+} 
+  
+```
+
+
+```{r log exposure calc}
+
+  table(occ.hist[,2]>0,is.na(occ.hist$beta.isco)) #2 location should be the substance here
+  selected <- occ.hist[,2]>0 & is.na(occ.hist$beta.isco)
+  occ.hist$beta.isco[selected] <- 0
+  table(occ.hist[,2]>0,is.na(occ.hist$beta.region))
+
+occ.hist$log.exposure <- -Inf
+selected <- !(occ.hist$chromium==0)
+occ.hist$log.exposure[selected] <- fixed.effects[fixed.effects$effect=="Intercept","estimate"] + occ.hist$beta.isco[selected] + occ.hist$beta.region[selected]
+occ.hist$log.exposure[selected] <- occ.hist$log.exposure[selected] + fixed.effects[fixed.effects$effect=="stime","estimate"]*480
+selected <- occ.hist$chromium==1
+occ.hist$log.exposure[selected] <- occ.hist$log.exposure[selected] + fixed.effects[fixed.effects$effect=="chromium" & fixed.effects$chromium==1,"estimate"]
+occ.hist$log.exposure.josue <- occ.hist$log.exposure
+occ.hist$log.exposure.josue[occ.hist$isco==100000] <- -Inf
+    
+selected <- !(occ.hist$chromium==0) & occ.hist$year>1970
+occ.hist$log.exposure[selected] <- occ.hist$log.exposure[selected] + fixed.effects[fixed.effects$effect=="year_97","estimate"] * (occ.hist$year[selected]-1997)
+selected <- !(occ.hist$chromium==0) & occ.hist$year<=1970
+occ.hist$log.exposure[selected] <- occ.hist$log.exposure[selected] + fixed.effects[fixed.effects$effect=="year_97","estimate"] * (1970-1997)
+    
+table(occ.hist$chromium,is.finite(occ.hist$log.exposure)) #all lines with chromium should have log.exposure
+occ.hist$assignment.level[occ.hist$chromium==0] <- 0
+occ.hist <- occ.hist[order(occ.hist$subjctid,occ.hist$year,occ.hist$year),]
+occ.hist$rank <- 1:nrow(occ.hist)
+  
+if (FALSE) { #not sure what this chunk does. leaving it out atm. seems like log.exposure.josue is only region plus jobs with no time effect.
+    occ.hist[,2][occ.hist$isco==100000] <- 0
+    occ.hist$log.exposure <- occ.hist$log.exposure.josue
+  }
+  
+  
+save(occ.hist,file=paste0(output.path,"updated.hist.chromium.Rdata")) #file with log.exposure for every job x year with all fixed and random effects
+
+```
+
+
+```{r select unique jobs}
+load(file=paste0(output.path,"updated.hist.chromium.Rdata"))
+load(file="/Users/cbge/OneDrive - Universiteit Utrecht/SYNERGY/SYNJEM/Occ.hist/Rdata/all.subjects.CG.Rdata")
+## new chunk
+  f <- function(x){max(x,na.rm=TRUE)}
+#  tmp <- summaryBy(log.exposure ~ subjctid + year, data=occ.hist, FUN=c(f,length))
+  tmp <- summaryBy(log.exposure ~ subjctid + year, data=occ.hist, FUN=f)
+  colnames(tmp)[3] <- "log.exposure"
+  tmp$selected <- 1
+  occ.hist <- merge(occ.hist,tmp,by=c("subjctid","year","log.exposure"),all.x=TRUE)
+  occ.hist$selected[is.na(occ.hist$selected)] <- 0
+  table(occ.hist$selected) #1=1527207
+  occ.hist <- occ.hist[order(occ.hist$rank),]
+  # tmp <- summaryBy(log.exposure ~ subjctid + year, data=occ.hist, FUN=length)
+  tmp <- summaryBy(rank ~ subjctid + year, data=occ.hist[occ.hist$selected==1,], FUN=min)
+  colnames(tmp)[3]<-"rank"
+  tmp$keep<-1
+  occ.hist<-merge(occ.hist,tmp,by=c("subjctid","year","rank"), all.x = TRUE)
+  occ.hist$selected[is.na(occ.hist$keep)]<-0
+  table(occ.hist$selected) #1=1424594 
+  occ.hist$keep<-NULL
+  
+
+  summary(occ.hist)
+  table(occ.hist$chromium,is.na(occ.hist$beta.isco))
+
+  nrow(unique(occ.hist[,c("subjctid","year")])) #1424594 
+  sum(occ.hist$selected) #1424594
+  table(occ.hist$chromium,occ.hist$assignment.level)
+  occ.hist <- occ.hist[occ.hist$selected==1,] #1424594 unique lines
+  save(occ.hist,file=paste0(output.path,"unique.hist.chromium.Rdata")) #file with log.exposure for every job x year with all fixed and random effects
+##new chunk end
+  
+
+all.subjects<-all.subjects[all.subjects$excluded==0,] #37866 subjects remain
+
+occ.hist <- merge(occ.hist,all.subjects[,c("subjctid","lagyr")],by="subjctid",all.x=TRUE)
+  nrow(occ.hist) #1424594
+  occ.hist <- subset(occ.hist,year<=lagyr) #this is to get all jobs before lagyr
+  nrow(occ.hist) #1396285
+```
+
+
+```{r exposure by subject}
+
+occ.hist$exposure<-exp(occ.hist$log.exposure)
+
+result <- data.frame(subjctid=unique(occ.hist$subjctid))
+  for (lag in seq(0,20,by=5)) {
+    tmp <- summaryBy(year ~ subjctid, data=occ.hist[occ.hist$selected==1 & occ.hist[,occ.hist$exposure]>0 & (occ.hist$lagyr-occ.hist$year)>=lag,],FUN=max)
+    colnames(tmp)[2] <- paste0("chromium",".last.exposure.lag",lag) #for all selected and exposed and appropriate lag, output max (latest) year exposed
+    result <- merge(result,tmp,by="subjctid",all.x=TRUE)
+    tmp <- summaryBy(exposure ~ subjctid, data=occ.hist[occ.hist$selected==1 & occ.hist[,occ.hist$exposure]>0 & (occ.hist$lagyr-occ.hist$year)>=lag,],FUN=function(x){length(x[x>0])})
+    colnames(tmp)[2] <- paste0("chromium",".duration.lag",lag) #for all selected, exposed, and appropriate lag, output years of exposure (note that diff exposure elvel treated the same)
+    result <- merge(result,tmp,by="subjctid",all.x=TRUE)
+    tmp <- summaryBy(exposure ~ subjctid, data=occ.hist[occ.hist$selected==1 & occ.hist[,occ.hist$exposure]>0 & (occ.hist$lagyr-occ.hist$year)>=lag,],FUN=function(x){sum(x)})
+    colnames(tmp)[2] <- paste0("chromium",".cumexposure.lag",lag) #for all selected, exposed, and appropriate lag, sum of total exposure
+    result <- merge(result,tmp,by="subjctid",all.x=TRUE)
+  }
+
+ table(is.na(result[,paste0("chromium",".last.exposure.lag0")])) #29178 NAs, which are people who are never exposed, hence last exposure = NA 
+  table(summaryBy(as.formula(paste0("exposure"," ~ subjctid")), data=occ.hist, FUN=max)[,paste0("exposure",".max")]) #show subjects by max exposure
+  all.subjects <- merge(all.subjects,result,by="subjctid",all.x=TRUE) #merge cumulative exposures with subjects
+  
+  variable.names(all.subjects) # looks good so far... - cg
+  
+summary(all.subjects$chromium.cumexposure.lag0) #29610   unexposed
+summary(all.subjects$chromium.duration.lag0) #29610    unexposed
+summary(all.subjects$chromium.last.exposure.lag0) #29610   unexposed
+
+table(is.na(all.subjects$chromium.cumexposure.lag5)) #29645  unexposed
+summary(all.subjects$chromium.duration.lag5) #29645  unexposed
+summary(all.subjects$chromium.last.exposure.lag5) #29645  unexposed
+
+table(is.na(all.subjects$chromium.cumexposure.lag10)) #29709  unexposed
+summary(all.subjects$chromium.duration.lag10) #29709  unexposed
+summary(all.subjects$chromium.last.exposure.lag10) #29709 unexposed
+
+table(is.na(all.subjects$chromium.cumexposure.lag15)) #29835  unexposed
+summary(all.subjects$chromium.duration.lag15) #29835   unexposed
+summary(all.subjects$chromium.last.exposure.lag15) #29835   unexposed
+
+table(is.na(all.subjects$chromium.cumexposure.lag20)) # 30024    unexposed
+summary(all.subjects$chromium.duration.lag20) # 30024   unexposed
+summary(all.subjects$chromium.last.exposure.lag20) # 30024  unexposed
+
+all.subjects$chromium.cumexposure.lag0[is.na(all.subjects$chromium.cumexposure.lag0)]<-0
+all.subjects$chromium.cumexposure.lag5[is.na(all.subjects$chromium.cumexposure.lag5)]<-0
+all.subjects$chromium.cumexposure.lag10[is.na(all.subjects$chromium.cumexposure.lag10)]<-0
+all.subjects$chromium.cumexposure.lag15[is.na(all.subjects$chromium.cumexposure.lag15)]<-0
+all.subjects$chromium.cumexposure.lag20[is.na(all.subjects$chromium.cumexposure.lag20)]<-0
+
+all.subjects$exposureQ4 <- cut(all.subjects$chromium.cumexposure.lag0,breaks=c(-Inf,0,quantile(all.subjects$chromium.cumexposure.lag0[all.subjects$status==0 & all.subjects$chromium.cumexposure.lag0>0],(1:3)/4),Inf))
+
+
+save(all.subjects,file=paste0(output.path,"final.subjects.linked.Rdata")) 
+  
+```
+
+```{r set up various exposure metrics}
+
+ for (lag in seq(0,20,by=5)) {
+    # lag <- 0
+    all.subjects[,paste0("ever_",indicator,lag)] <- as.numeric(!is.na(all.subjects[,paste0(indicator,".last.exposure.lag",lag)]))
+    all.subjects[,paste0(indicator,"_lastexp",lag)] <- all.subjects[,paste0(indicator,".last.exposure.lag",lag)]
+
+    all.subjects[,paste0(indicator,"_time_since",lag)] <- all.subjects$enrolyr - all.subjects[,paste0(indicator,".last.exposure.lag",lag)]
+    selected <- !is.na(all.subjects$diagyr)
+    all.subjects[selected,paste0(indicator,"_time_since",lag)] <- (all.subjects$diagyr - all.subjects[,paste0(indicator,".last.exposure.lag",lag)])[selected]
+
+    all.subjects[,paste0(indicator,"_time_since_exp40_",lag)] <- as.numeric(cut(all.subjects[,paste0(indicator,"_time_since",lag)], c(-Inf,5,10,20,30,40,Inf),right=FALSE,include.lowest=TRUE))
+    selected <- all.subjects[,paste0("ever_",indicator,lag)]==0
+    all.subjects[selected,paste0(indicator,"_time_since_exp40_",lag)] <- 0
+
+    all.subjects[,paste0(indicator,"_dur",lag)] <- all.subjects[,paste0(indicator,".duration.lag",lag)]
+    all.subjects[,paste0(indicator,"_dur",lag)][is.na(all.subjects[,paste0(indicator,".last.exposure.lag",lag)])] <- 0
+    all.subjects[,paste0(indicator,"_dur_cat",lag)] <- as.numeric(cut(all.subjects[,paste0(indicator,"_dur",lag)],c(-Inf,1e-6,10,20,30,Inf),right=FALSE,include.lowest=TRUE))-1
+
+    qq <- quantile(all.subjects[all.subjects$status==0 & all.subjects[,paste0("ever_",indicator,lag)]>0,paste0(indicator,".cumexposure.lag",lag)],na.rm=TRUE,c(1:3)/4)
+
+    all.subjects[,paste0(indicator,"_cum",lag)] <- all.subjects[,paste0(indicator,".cumexposure.lag",lag)]
+    all.subjects[,paste0(indicator,"_cum",lag)][all.subjects[,paste0("ever_",indicator,lag)]==0] <- 0
+
+    all.subjects[,paste0(indicator,"_qq",lag)] <- as.numeric(cut(all.subjects[,paste0(indicator,"_cum",lag)],c(-Inf,1e-6,qq,Inf),right=FALSE,include.lowest=TRUE))-1
+ }
+
+
+###need to clean this up
+
+names(all.subjects)
+all.subjects.cr6<-all.subjects[,c(1,45:84)]
+names(all.subjects.cr6)
+
+save(all.subjects.cr6,file=paste0(output.path,"final.subjects.linked.trimmed.Rdata")) 
+
+```
+
+```{r double checks}
+
+#2/3 level estimates
+load(file=paste0(output.path,"level2.estimates.Rdata")) 
+load(file=paste0(output.path,"level3.estimates.Rdata"))
+level2.estimates.new<-level2.estimates
+level3.estimates.new<-level3.estimates
+load(file=paste0(output.path,"level2.estimates copy.Rdata")) 
+load(file=paste0(output.path,"level3.estimates copy.Rdata"))
+
+#all subject exposures
+load(file=paste0(output.path,"final.subjects.linked.Rdata"))
+all.subjects2<-read.csv(file=paste0(data.path,"R.syn.chrom copy.csv"),na=".") #OG file from LP
+
+all.subjects$subjctid<-as.numeric(as.character(all.subjects$subjctid))
+all.subjects<-all.subjects[order(all.subjects$subjctid),]
+all.subjects2<-all.subjects2[order(all.subjects2$subjctid),]
+
+plot(all.subjects$chromium.cumexposure.lag0,all.subjects2$chrom_cum0) #problem here
+plot(all.subjects$packyrs,all.subjects2$packyrs)#no prob here
+
+summary(all.subjects$chromium.cumexposure.lag0)
+summary(all.subjects2$chrom_cum0) #different means
+
+table(all.subjects$status,all.subjects$exposureQ4)
+table(all.subjects2$status,all.subjects2$QQ0) #very similar
+
+#occ.hist exposure
+load(file=paste0(output.path,"unique.hist.chromium.Rdata"))
+occ.hist2<-occ.hist
+load(file=paste0(output.path,"linked.hist copy.Rdata"))
+occ.hist<-occ.hist[occ.hist$selected==1,]
+
+occ.hist2$subjctid<-as.numeric(as.character(occ.hist2$subjctid))
+occ.hist2<-occ.hist2[order(occ.hist2$subjctid,occ.hist2$year,occ.hist2$isco),]
+
+occ.hist$subjctid<-as.numeric(as.character(occ.hist$subjctid))
+occ.hist<-occ.hist[order(occ.hist$subjctid,occ.hist$year,occ.hist$isco),]
+
+plot(occ.hist$log.exposure,occ.hist2$log.exposure) #some thing very wrong here. 
+plot(occ.hist$beta.isco,occ.hist2$beta.isco)
+plot(occ.hist$beta.region,occ.hist2$beta.region)
+
+table(is.finite(occ.hist$log.exposure)) #159310 with exposure in og
+table(is.finite(occ.hist2$log.exposure)) #159310 with exposure in new. so no problem with exposure status here. 
+
+summary(occ.hist$log.exposure[is.finite(occ.hist$log.exposure)])
+summary(occ.hist2$log.exposure[is.finite(occ.hist2$log.exposure)])
+
+#additonal exposure metrics
+
+all.subjects2<-read.csv(file=paste0(data.path,"R.syn.chrom copy.csv"),na=".") #OG file from LP
+table(all.subjects$qq0,all.subjects2$QQ0) #not 100% but should be ok
+table(all.subjects$qq0,all.subjects$status) # ok
+
+table(all.subjects$ever_chromium0,all.subjects2$EVER_CHROM0) # ok
+table(all.subjects$time_since_exp0,all.subjects2$time_since_exp0) # ok
+table(all.subjects$chromium_dur_cat0,all.subjects2$chrom_dur_cat0) # ok
+plot(all.subjects$chromium_cum0,all.subjects2$chrom_cum0) #ok
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
